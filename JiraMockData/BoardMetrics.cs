@@ -11,11 +11,11 @@ namespace JiraMockData
 {
     public class BoardMetrics
     {
-        readonly string[] boardNames = new string[] { "bur_board" };
+        public static string[] boardNames = new string[] { "bur_board" };
 
-        readonly string[] taskType = new string[] { "User Story", "Task", "Sub Task" };
+        public static string[] taskType = new string[] { "User Story", "Task", "Sub Task" };
 
-        readonly string[] taskStatus = new string[] { "new", "inProgress", "done" };
+        public static string[] taskStatus = new string[] { "new", "inProgress", "done" };
 
         public const string boardIndexname = "dev.logevent.anypoint-jira-boardmetrics.";
         public const string boardUserIssueIndexName = "dev.logevent.anypoint-jira-board-user-issue-metrics.";
@@ -33,23 +33,23 @@ namespace JiraMockData
         int sprintcycle = 14;
         int noOfDays = 60;
 
-        Random random;
+        static Random random = new Random();
 
         ElasticSearch elasticSearch;
         public BoardMetrics()
         {
-            random = new Random();
+            //random = new Random();
             elasticSearch = new ElasticSearch();
         }
 
         public async Task GenerateData()
         {
 
-            for (int day = 0; day <= noOfDays; day++)
+            for (int sprintNo = 1; sprintNo <= Convert.ToInt32(Math.Ceiling(Convert.ToDecimal(noOfDays / sprintcycle))); sprintNo++)
             {
                 foreach (var boardName in boardNames)
                 {
-                    var sprintNo = Convert.ToInt32(Math.Ceiling(Convert.ToDecimal(day / sprintcycle)));
+                    //var sprintNo = Convert.ToInt32(Math.Ceiling(Convert.ToDecimal(day / sprintcycle)));
                     var sprint = new Sprint()
                     {
                         id = sprintNo,
@@ -57,7 +57,7 @@ namespace JiraMockData
                         state = "active",
                         startDate = GetDate(sprintNo),
                         endDate = GetDate(sprintNo + sprintcycle),
-                        goal = "Sprint " + sprintNo + "goals"
+                        goal = "Sprint " + sprintNo + " goals"
                     };
                    
 
@@ -71,7 +71,7 @@ namespace JiraMockData
                         //create a random issue
                         var issue = new List<IssueWithoutAssignee>();
 
-                        for (var issueId = 1; issueId <= random.Next(1, 15); issueId++)
+                        for (var issueId = 1; issueId <= random.Next(5, 15); issueId++)
                         {
                             issue.Add(new IssueWithoutAssignee()
                             {
@@ -80,8 +80,8 @@ namespace JiraMockData
                                 summary = "Summary of " + issueId,
                                 created = sprint.startDate,
                                 updated = sprint.startDate,
-                                customField = new CustomField() { storyPoints = random.Next(1, 16) },
-                                status = new Status() { key = taskStatus[random.Next(0, taskStatus.Length)] },
+                                customField = new CustomField() { storyPoints = random.Next(1, 10) },
+                                status = new Status() { key = taskStatus[random.Next(0, taskStatus.Length-1)] },
                                 issuetype = new Issuetype(taskType[random.Next(0, taskType.Length)]),
 
                             });
@@ -141,6 +141,63 @@ namespace JiraMockData
                     //await elasticSearch.GetAsync();
                 }
             }
+
+
+
+
+            //Issue count manipulation
+
+            foreach(var boardIssue in boardAndIssueMetrics)
+            {
+                for(var day=1; day <= sprintcycle; day++)
+                {
+                    var processedDate = GetDate(((boardIssue.Key.sprint.id - 1) * 14) + day);
+
+                    foreach(var userIssues in boardIssue.Value)
+                    {
+
+                        //change the status
+                        SwapIssueStatus(userIssues);
+
+                        //recalculate the taskcount and storypoints;
+
+                        userIssues.taskStatusCount = new Metrics(GetTaskCounts(userIssues.issue, taskStatus[0]), GetTaskCounts(userIssues.issue, taskStatus[1]), GetTaskCounts(userIssues.issue, taskStatus[2]));
+
+                        userIssues.storyPoints = new Metrics(GetStoryPointsSum(userIssues.issue, taskStatus[0]), GetStoryPointsSum(userIssues.issue, taskStatus[1]), GetStoryPointsSum(userIssues.issue, taskStatus[2]));
+
+                        userIssues.processedDate = processedDate;
+                    }
+
+                    boardIssue.Key.processedDate = processedDate;
+
+                    boardIssue.Key.taskStatusCount = new MetricsStatusCount(GetBoardTaskCount(boardIssue.Value));
+                    boardIssue.Key.storyPoints = new MetricsStatusCount(GetBoardStoryPoints(boardIssue.Value));
+
+                    //Push to ELK
+                    await elasticSearch.PostAsync(boardIndexname + GetYMDPatternDate(processedDate), JsonSerializer.Serialize(boardIssue.Key));
+
+                    foreach (var issue in boardIssue.Value)
+                    {
+                        await elasticSearch.PostAsync(boardUserIssueIndexName + GetYMDPatternDate(processedDate), JsonSerializer.Serialize(issue));
+                    }
+
+                }
+            }
+
+        }
+
+
+        private static BoardUserIssueModel SwapIssueStatus(BoardUserIssueModel userIssues)
+        {
+            var issue = userIssues.issue[random.Next(0, userIssues.issue.Count)];
+
+            if (issue.status.key == taskStatus[0])
+                issue.status.key = taskStatus[1];
+
+            else if (issue.status.key == taskStatus[1])
+                issue.status.key = taskStatus[2];
+
+            return userIssues;
         }
 
         private static int GetTaskCounts(List<IssueWithoutAssignee> issue, string key = "new")
@@ -179,7 +236,7 @@ namespace JiraMockData
 
         private static string GetDate(int addDays=0)
         {
-            return String.Format("{0:O}", DateTime.Now.AddDays(addDays).ToUniversalTime());
+            return String.Format("{0:O}", DateTime.Now.AddDays(addDays-1).ToUniversalTime());
         }
 
         public static string GetYMDPatternDate(int addDays=0)
