@@ -39,10 +39,10 @@ namespace JiraMockData
         ElasticSearch elasticSearch;
 
         bool bulkPost = false;
-        public BoardMetrics(bool bulkPost)
+        public BoardMetrics(bool bulkPost, string elkHostName)
         {
             //random = new Random();
-            elasticSearch = new ElasticSearch();
+            elasticSearch = new ElasticSearch(elkHostName);
             this.bulkPost = bulkPost;
         }
 

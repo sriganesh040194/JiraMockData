@@ -9,11 +9,11 @@ namespace JiraMockData
 {
     public class ElasticSearch
     {
-        readonly Uri host = new Uri("http://localhost:9200");
+        //readonly Uri host = new Uri("http://localhost:9200");
         HttpClient httpClient;
-        public ElasticSearch()
+        public ElasticSearch(string hostname)
         {
-
+            var host = new Uri(hostname);
             httpClient = new HttpClient();
             httpClient.Timeout = new TimeSpan(0, 2, 0);
             httpClient.BaseAddress = host;
