@@ -5,6 +5,26 @@ namespace JiraMockData.Model
 {
     public class BoardUserIssueModel
     {
+        public BoardUserIssueModel()
+        {
+
+        }
+
+        public BoardUserIssueModel(BoardUserIssueModel x)
+        {
+            boardAndUserName = x.boardAndUserName;
+            boardName = x.boardName;
+            displayName = x.displayName;
+            accountId = x.accountId;
+            emailAddress = x.emailAddress;
+            taskStatusCount = x.taskStatusCount;
+            storyPoints = x.storyPoints;
+            processedDate = x.processedDate;
+            sprint = x.sprint;
+            project = x.project;
+            issue = x.issue;
+        }
+
         public string boardAndUserName { get; set; }
         public string boardName { get; set; }
         public string displayName { get; set; }

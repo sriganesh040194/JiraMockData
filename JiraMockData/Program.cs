@@ -19,7 +19,13 @@ namespace JiraMockData
             int option = string.IsNullOrEmpty(optioninput) ? 0 : Convert.ToInt32(optioninput);
             if (option == 1)
             {
-                var boardMetrics = new BoardMetrics();
+
+                Console.WriteLine("Bulk Post Y/N? [N]: ");
+                var input = Console.ReadLine();
+                string answer = string.IsNullOrEmpty(input) ? "N" : input;
+
+
+                var boardMetrics = new BoardMetrics((answer == "Y"|| answer ==  "y")? true: false );
                 await boardMetrics.GenerateData();
 
                 Console.WriteLine("############################# DONE ########################");

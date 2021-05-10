@@ -15,6 +15,7 @@ namespace JiraMockData
         {
 
             httpClient = new HttpClient();
+            httpClient.Timeout = new TimeSpan(0, 2, 0);
             httpClient.BaseAddress = host;
         }
 
@@ -24,7 +25,7 @@ namespace JiraMockData
             var httpContent = new StringContent(TransformToELKFormat(data), Encoding.UTF8, "application/x-ndjson");
 
 
-            Console.WriteLine(await httpContent.ReadAsStringAsync());
+            //Console.WriteLine(await httpContent.ReadAsStringAsync());
             try
             {
                 var response = await httpClient.PostAsync(indexName + "/_bulk", httpContent);
@@ -40,13 +41,30 @@ namespace JiraMockData
             }
         }
 
-        //public async Task PostAsync(string indexName, List<string> datas)
-        //{
-        //    foreach (var data in datas)
-        //    {
-        //        await PostAsync(indexName, data);
-        //    }
-        //}
+        public async Task BulkPostAsync(string data)
+        {
+            var httpContent = new StringContent(data, Encoding.UTF8, "application/x-ndjson");
+
+
+            Console.WriteLine(await httpContent.ReadAsStringAsync());
+            try
+            {
+                var response = await httpClient.PostAsync("/_bulk", httpContent);
+
+                if (response.IsSuccessStatusCode)
+                    Console.WriteLine("Bulk POSTED successfully to ELK");
+                else
+                {
+                    Console.WriteLine("BULK POST FAILED POST to ELK");
+                    Console.WriteLine(await response.Content.ReadAsStringAsync());
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+
+        }
 
 
         public async Task GetAsync()
@@ -88,5 +106,13 @@ namespace JiraMockData
             return tranformedData;
         }
 
+
+        public string BulkPostDataFormatter(string indexName, string data)
+        {
+            var index = "{\"index\": {\"_index\": \"" + indexName + "\"}}";
+            var tranformedData = index + "\n" + data + "\n";
+            return tranformedData;
+
+        }
     }
 }

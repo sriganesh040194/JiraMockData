@@ -6,12 +6,13 @@ using System.Linq;
 using System.Text.Json;
 using System.Globalization;
 using System.Threading.Tasks;
+using JiraMockData.Utils;
 
 namespace JiraMockData
 {
     public class BoardMetrics
     {
-        public static string[] boardNames = new string[] { "bur_board" };
+        public static string[] boardNames = new string[] { "bur_board", "bd2" };
 
         public static string[] taskType = new string[] { "User Story", "Task", "Sub Task" };
 
@@ -36,14 +37,19 @@ namespace JiraMockData
         static Random random = new Random();
 
         ElasticSearch elasticSearch;
-        public BoardMetrics()
+
+        bool bulkPost = false;
+        public BoardMetrics(bool bulkPost)
         {
             //random = new Random();
             elasticSearch = new ElasticSearch();
+            this.bulkPost = bulkPost;
         }
 
         public async Task GenerateData()
         {
+
+            string bulkPostData = string.Empty;
 
             for (int sprintNo = 1; sprintNo <= Convert.ToInt32(Math.Ceiling(Convert.ToDecimal(noOfDays / sprintcycle))); sprintNo++)
             {
@@ -59,7 +65,7 @@ namespace JiraMockData
                         endDate = GetDate(sprintNo + sprintcycle),
                         goal = "Sprint " + sprintNo + " goals"
                     };
-                   
+
 
                     var issueAssigneeStripped = new List<IssueAssignee>();
                     var issueAssigned = new List<BoardUserIssueModel>();
@@ -81,7 +87,7 @@ namespace JiraMockData
                                 created = sprint.startDate,
                                 updated = sprint.startDate,
                                 customField = new CustomField() { storyPoints = random.Next(1, 10) },
-                                status = new Status() { key = taskStatus[random.Next(0, taskStatus.Length-1)] },
+                                status = new Status() { key = taskStatus[random.Next(0, taskStatus.Length - 1)] },
                                 issuetype = new Issuetype(taskType[random.Next(0, taskType.Length)]),
 
                             });
@@ -97,6 +103,7 @@ namespace JiraMockData
                         issueAssigned.Add(new BoardUserIssueModel()
                         {
                             boardAndUserName = boardName + "_" + assignee.Value,
+                            accountId = assignee.Key,
                             boardName = boardName,
                             displayName = assignee.Value,
                             emailAddress = "",
@@ -122,23 +129,8 @@ namespace JiraMockData
                         storyPoints = new MetricsStatusCount(GetBoardStoryPoints(issueAssigned))
                     };
 
-                    Console.WriteLine("Board User Metrics ######################################");
-                    Console.WriteLine(JsonSerializer.Serialize(issueAssigned));
-                    Console.WriteLine("Board Metrics ######################################");
-                    Console.WriteLine(JsonSerializer.Serialize(boardMetricsModel));
-
-
                     boardAndIssueMetrics.Add(new KeyValuePair<BoardMetricsModel, List<BoardUserIssueModel>>(boardMetricsModel, issueAssigned));
 
-                    //await elasticSearch.PostAsync(boardIndexname + GetYMDPatternDate(day), JsonSerializer.Serialize(boardMetricsModel));
-
-                    //foreach(var issue in issueAssigned)
-                    //{
-                    //    await elasticSearch.PostAsync(boardUserIssueIndexName + GetYMDPatternDate(day), JsonSerializer.Serialize(issue));
-                    //}
-                    
-
-                    //await elasticSearch.GetAsync();
                 }
             }
 
@@ -146,14 +138,14 @@ namespace JiraMockData
 
 
             //Issue count manipulation
-
-            foreach(var boardIssue in boardAndIssueMetrics)
+            var allUserIssue = new List<BoardUserIssueModel>();
+            foreach (var boardIssue in boardAndIssueMetrics)
             {
-                for(var day=1; day <= sprintcycle; day++)
+                for (var day = 1; day <= sprintcycle; day++)
                 {
                     var processedDate = GetDate(((boardIssue.Key.sprint.id - 1) * 14) + day);
 
-                    foreach(var userIssues in boardIssue.Value)
+                    foreach (var userIssues in boardIssue.Value)
                     {
 
                         //change the status
@@ -166,24 +158,76 @@ namespace JiraMockData
                         userIssues.storyPoints = new Metrics(GetStoryPointsSum(userIssues.issue, taskStatus[0]), GetStoryPointsSum(userIssues.issue, taskStatus[1]), GetStoryPointsSum(userIssues.issue, taskStatus[2]));
 
                         userIssues.processedDate = processedDate;
+
                     }
+
+                    allUserIssue.AddRange(boardIssue.Value.ConvertAll(a => new BoardUserIssueModel(a)));
 
                     boardIssue.Key.processedDate = processedDate;
 
                     boardIssue.Key.taskStatusCount = new MetricsStatusCount(GetBoardTaskCount(boardIssue.Value));
                     boardIssue.Key.storyPoints = new MetricsStatusCount(GetBoardStoryPoints(boardIssue.Value));
 
-                    //Push to ELK
-                    await elasticSearch.PostAsync(boardIndexname + GetYMDPatternDate(processedDate), JsonSerializer.Serialize(boardIssue.Key));
 
-                    foreach (var issue in boardIssue.Value)
+                    if (!bulkPost)
                     {
-                        await elasticSearch.PostAsync(boardUserIssueIndexName + GetYMDPatternDate(processedDate), JsonSerializer.Serialize(issue));
+                        ////POST to ELK
+                        await elasticSearch.PostAsync(boardIndexname + GetYMDPatternDate(processedDate), JsonSerializer.Serialize(boardIssue.Key));
+
+                        foreach (var issue in boardIssue.Value)
+                        {
+                            await elasticSearch.PostAsync(boardUserIssueIndexName + GetYMDPatternDate(processedDate), JsonSerializer.Serialize(issue));
+                        }
+                    }
+
+                    else
+                    {
+                        //Bulk POST formatter
+                        bulkPostData += elasticSearch.BulkPostDataFormatter(boardIndexname + GetYMDPatternDate(processedDate), JsonSerializer.Serialize(boardIssue.Key));
+                        foreach (var issue in boardIssue.Value)
+                        {
+                            bulkPostData += elasticSearch.BulkPostDataFormatter(boardUserIssueIndexName + GetYMDPatternDate(processedDate), JsonSerializer.Serialize(issue));
+                        }
                     }
 
                 }
             }
 
+
+            foreach (var assignee in assignees)
+            {
+
+                var assigneeIssues = allUserIssue.Where(a => a.accountId == assignee.Key);
+
+                var groupByProcessedDate = from issue in assigneeIssues group issue by issue.processedDate;
+                foreach (var issuesgroup in groupByProcessedDate)
+                {
+                    var issueArray = issuesgroup.SelectMany(a => a.issue).ToList();
+                    var userMetrics = new UserMetricsModel()
+                    {
+                        accountId = assignee.Key,
+                        displayName = assignee.Value,
+                        processedDate = issuesgroup.Key,
+                        taskStatusCount = new Metrics(GetTaskCounts(issueArray, taskStatus[0]), GetTaskCounts(issueArray, taskStatus[1]), GetTaskCounts(issueArray, taskStatus[2])),
+                        storyPoints = new Metrics(GetStoryPointsSum(issueArray, taskStatus[0]), GetStoryPointsSum(issueArray, taskStatus[1]), GetStoryPointsSum(issueArray, taskStatus[2]))
+
+                    };
+
+                    if (!bulkPost)
+                    {
+                        //Push to ELK
+                        await elasticSearch.PostAsync(userIndexName + GetYMDPatternDate(userMetrics.processedDate), JsonSerializer.Serialize(userMetrics));
+                    }
+                    else
+                    {
+                        //Bulk Post formatter
+                        bulkPostData += elasticSearch.BulkPostDataFormatter(userIndexName + GetYMDPatternDate(userMetrics.processedDate), JsonSerializer.Serialize(userMetrics));
+                    }
+                }
+            }
+            //BULK POST TO ELK
+            if (bulkPost)
+                await elasticSearch.BulkPostAsync(bulkPostData);
         }
 
 
